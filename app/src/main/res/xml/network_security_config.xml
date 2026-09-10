@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Phase2: Sina quote API still uses cleartext HTTP for personal use only. -->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">sinajs.cn</domain>
+        <domain includeSubdomains="true">hq.sinajs.cn</domain>
+    </domain-config>
+</network-security-config>
