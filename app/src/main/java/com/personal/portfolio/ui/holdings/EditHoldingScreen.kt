@@ -132,6 +132,7 @@ fun EditHoldingScreen(
     var currentPrice by remember(initial?.id) {
         mutableStateOf(initial?.currentPrice?.toPlainString().orEmpty())
     }
+    var navAsOfDate by remember(initial?.id) { mutableStateOf(initial?.navAsOfDate.orEmpty()) }
     var market by remember(initial?.id) { mutableStateOf(initial?.market ?: Market.SH) }
     var assetType by remember(initial?.id) {
         mutableStateOf(initial?.assetType ?: AssetType.CHINA_EQUITY)
@@ -141,6 +142,26 @@ fun EditHoldingScreen(
     var lookingUp by remember(initial?.id) { mutableStateOf(false) }
     var candidates by remember(initial?.id) { mutableStateOf<List<SymbolCandidate>>(emptyList()) }
     val scope = rememberCoroutineScope()
+
+    fun applyFilled(result: HoldingLookupResult.Filled) {
+        symbol = result.symbol
+        name = result.name
+        QuoteSymbolMapper.marketFromCode(result.marketCode)?.let { market = it }
+        result.price?.let { currentPrice = it.stripTrailingZeros().toPlainString() }
+        result.sector?.takeIf { it.isNotBlank() }?.let { sector = it }
+        result.assetTypeName?.let { typeName ->
+            runCatching { AssetType.valueOf(typeName) }.getOrNull()?.let { assetType = it }
+        }
+        result.navAsOfDate?.let { navAsOfDate = it }
+    }
+
+    fun lookupInfo(result: HoldingLookupResult.Filled): String {
+        val bits = mutableListOf("已识别 ${result.name}")
+        if (result.price != null) bits += if (result.marketCode == "jj") "净值已填" else "现价已填"
+        if (!result.sector.isNullOrBlank()) bits += "行业 ${result.sector}"
+        if (!result.navAsOfDate.isNullOrBlank()) bits += "净值日 ${result.navAsOfDate}"
+        return bits.joinToString(" · ")
+    }
 
     Scaffold(
         topBar = {
@@ -205,7 +226,8 @@ fun EditHoldingScreen(
                     label = "市场",
                     options = Market.entries,
                     selected = market,
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier.weight(1f),
+                    labelMapper = { it.labelZh }
                 ) { market = it }
                 EnumDropdown(
                     label = "类别",
@@ -238,19 +260,8 @@ fun EditHoldingScreen(
                                 try {
                                     when (val result = onLookup(symbol, name, market)) {
                                         is HoldingLookupResult.Filled -> {
-                                            symbol = result.symbol
-                                            name = result.name
-                                            QuoteSymbolMapper.marketFromCode(result.marketCode)?.let {
-                                                market = it
-                                            }
-                                            result.price?.let {
-                                                currentPrice = it.stripTrailingZeros().toPlainString()
-                                            }
-                                            info = if (result.price != null) {
-                                                "已识别 ${result.name}，现价已填"
-                                            } else {
-                                                "已识别 ${result.name}，无现价"
-                                            }
+                                            applyFilled(result)
+                                            info = lookupInfo(result)
                                         }
                                         is HoldingLookupResult.Candidates -> candidates = result.items
                                         is HoldingLookupResult.Failed -> error = result.message
@@ -361,7 +372,8 @@ fun EditHoldingScreen(
                                         costPrice = c,
                                         currentPrice = p ?: c,
                                         currency = "CNY",
-                                        source = HoldingSource.MANUAL
+                                        source = HoldingSource.MANUAL,
+                                        navAsOfDate = navAsOfDate.trim().ifBlank { null }
                                     )
                                 )
                             }
@@ -381,8 +393,16 @@ fun EditHoldingScreen(
                 }
             }
 
+            if (!navAsOfDate.isNullOrBlank() && market == Market.OTC_FUND) {
+                Text(
+                    "净值日期：$navAsOfDate",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
             Text(
-                "A股/ETF 可识别或首页刷新行情；油气类选「能源/商品」；场外净值请手填。",
+                "A股/ETF 识别可填现价与行业；场外基金选「场外基金」或搜名称，可填净值/主题；首页刷新会更新行情与净值。",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -405,20 +425,14 @@ fun EditHoldingScreen(
                                     try {
                                         when (
                                             val result = onLookup(
-                                                c.marketCode + c.symbol,
+                                                c.symbol,
                                                 c.name,
                                                 QuoteSymbolMapper.marketFromCode(c.marketCode) ?: market
                                             )
                                         ) {
                                             is HoldingLookupResult.Filled -> {
-                                                symbol = result.symbol
-                                                name = result.name
-                                                QuoteSymbolMapper.marketFromCode(result.marketCode)
-                                                    ?.let { market = it }
-                                                result.price?.let {
-                                                    currentPrice = it.stripTrailingZeros().toPlainString()
-                                                }
-                                                info = "已选择：${result.name}"
+                                                applyFilled(result)
+                                                info = lookupInfo(result)
                                             }
                                             is HoldingLookupResult.Failed -> error = result.message
                                             is HoldingLookupResult.Candidates ->

@@ -8,6 +8,8 @@ import com.personal.portfolio.domain.allocation.NewMoneyAllocator
 import com.personal.portfolio.domain.allocation.NewMoneyPlan
 import com.personal.portfolio.domain.allocation.RebalanceAdvisor
 import com.personal.portfolio.domain.allocation.RebalanceSuggestion
+import com.personal.portfolio.domain.allocation.SectorExposure
+import com.personal.portfolio.domain.allocation.SectorExposureRow
 import com.personal.portfolio.domain.model.AiAnalysisRecord
 import com.personal.portfolio.domain.model.AiAnalysisResult
 import com.personal.portfolio.domain.model.AiSettings
@@ -51,6 +53,7 @@ data class PortfolioUiState(
     val targets: List<TargetAllocation> = emptyList(),
     val availableCash: BigDecimal = BigDecimal.ZERO,
     val snapshot: AllocationSnapshot? = null,
+    val sectorExposure: List<SectorExposureRow> = emptyList(),
     val isLoading: Boolean = true,
     val isRefreshingQuotes: Boolean = false,
     val lastQuoteUpdateEpochMs: Long? = null,
@@ -110,11 +113,13 @@ class PortfolioViewModel(
         val snapshot = AllocationEngine.compute(holdings, cash, targets)
         val risks = RiskChecker.check(holdings, snapshot, rules)
         val rebalance = RebalanceAdvisor.suggest(snapshot, rules)
+        val sectors = SectorExposure.compute(holdings, snapshot.totalAssets)
         PortfolioUiState(
             holdings = holdings,
             targets = targets,
             availableCash = cash,
             snapshot = snapshot,
+            sectorExposure = sectors,
             isLoading = false,
             lastQuoteUpdateEpochMs = lastUpdate,
             lastQuoteUpdateText = lastUpdate?.let { formatTime(it) },
@@ -582,6 +587,16 @@ class PortfolioViewModel(
         viewModelScope.launch {
             aiAnalysisRepository.markAccepted(id, accepted)
         }
+    }
+
+    fun deleteAiHistory(id: Long) {
+        viewModelScope.launch {
+            aiAnalysisRepository.deleteHistory(id)
+        }
+    }
+
+    fun openAiHistoryResult(result: AiAnalysisResult) {
+        latestAiResult.value = result
     }
 
     fun ma30wFor(holding: Holding): Ma30wState? {

@@ -36,4 +36,5 @@ interface AiAnalysisRepository {
         ma30wRules: Ma30wRules = Ma30wRules.defaults()
     ): AiAnalysisResult
     suspend fun markAccepted(id: Long, accepted: Boolean)
+    suspend fun deleteHistory(id: Long)
 }

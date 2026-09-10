@@ -50,7 +50,7 @@ class TencentSymbolSearch(
                 val code = bits[1].trim()
                 val name = bits[2].trim()
                 if (code.isEmpty() || name.isEmpty()) return@mapNotNull null
-                if (market !in setOf("sh", "sz", "bj")) return@mapNotNull null
+                if (market !in setOf("sh", "sz", "bj", "jj")) return@mapNotNull null
                 SymbolCandidate(
                     symbol = code,
                     name = name,

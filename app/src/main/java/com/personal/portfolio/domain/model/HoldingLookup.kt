@@ -14,7 +14,10 @@ sealed class HoldingLookupResult {
         val symbol: String,
         val name: String,
         val marketCode: String,
-        val price: BigDecimal?
+        val price: BigDecimal?,
+        val sector: String? = null,
+        val assetTypeName: String? = null,
+        val navAsOfDate: String? = null
     ) : HoldingLookupResult()
 
     data class Candidates(val items: List<SymbolCandidate>) : HoldingLookupResult()

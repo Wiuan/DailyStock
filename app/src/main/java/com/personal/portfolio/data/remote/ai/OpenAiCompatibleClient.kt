@@ -46,7 +46,7 @@ class OpenAiCompatibleClient(
                             .put("role", "user")
                             .put(
                                 "content",
-                                "请基于以下结构化组合快照输出分析 JSON：\n$snapshotJson"
+                                "请基于以下结构化组合快照，严格按 system 中的 JSON schema 输出完整分析（必须含非空 summary 与 reasoning）：\n$snapshotJson"
                             )
                     )
             )
@@ -101,7 +101,7 @@ class OpenAiCompatibleClient(
                     .put(
                         JSONObject()
                             .put("role", "user")
-                            .put("content", "请基于以下结构化组合快照输出分析 JSON：\n$snapshotJson")
+                            .put("content", "请基于以下结构化组合快照，严格按 system 中的 JSON schema 输出完整分析（必须含非空 summary 与 reasoning）：\n$snapshotJson")
                     )
             )
             .put("temperature", 0.2)

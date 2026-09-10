@@ -38,7 +38,7 @@ import kotlinx.coroutines.launch
         QuoteCacheEntity::class,
         Ma30wStateEntity::class
     ],
-    version = 3,
+    version = 4,
     exportSchema = false
 )
 abstract class PortfolioDatabase : RoomDatabase() {
@@ -100,6 +100,12 @@ abstract class PortfolioDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE holdings ADD COLUMN navAsOfDate TEXT")
+            }
+        }
+
         @Volatile
         private var instance: PortfolioDatabase? = null
 
@@ -110,7 +116,7 @@ abstract class PortfolioDatabase : RoomDatabase() {
                     PortfolioDatabase::class.java,
                     DB_NAME
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                     .addCallback(SeedCallback())
                     .build()
                     .also { instance = it }

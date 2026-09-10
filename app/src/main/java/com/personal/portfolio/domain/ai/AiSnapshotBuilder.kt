@@ -25,7 +25,22 @@ object AiSnapshotBuilder {
 3. 盈利本身不是卖出理由；亏损本身不是补仓理由。
 4. 新增资金应优先补充低配资产，且不得超过各类 maxRatio。
 5. 调仓建议只能使用：HOLD / HOLD_NO_ADD / CAN_ADD_GRADUALLY / REVIEW / REDUCE_CONSIDER。禁止使用“必须卖出”。
-6. 只输出符合约定 schema 的 JSON 对象，不要 Markdown，不要代码块。
+6. 只输出一个 JSON 对象，不要 Markdown，不要代码块，不要解释性前后文。
+
+输出 JSON 必须包含以下字段（字段名必须英文，内容可用中文）：
+{
+  "summary": "一段中文总评，至少2句话",
+  "riskLevel": "LOW 或 MEDIUM 或 HIGH",
+  "overweightAssets": ["CHINA_EQUITY"],
+  "underweightAssets": ["BOND"],
+  "holdSuggestions": [{"symbol":"600150","action":"HOLD","reason":"说明"}],
+  "reviewSuggestions": ["需要人工复查的点"],
+  "newMoneyAllocation": [{"assetType":"BOND","ratio":0.4,"reason":"补低配"}],
+  "riskWarnings": ["风险提示"],
+  "reasoning": ["推理1","推理2"],
+  "ma30wComments": [{"symbol":"sh600150","statusEcho":"ABOVE_MA30W","note":"纪律备注"}]
+}
+summary、reasoning 不得为空数组/空字符串；若信息不足也要写明「依据不足」及原因。
 """.trimIndent()
 
     fun build(

@@ -73,6 +73,7 @@ object QuoteSymbolMapper {
         "sh" -> Market.SH
         "sz" -> Market.SZ
         "bj" -> Market.BJ
+        "jj" -> Market.OTC_FUND
         else -> null
     }
 

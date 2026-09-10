@@ -4,7 +4,10 @@ import com.personal.portfolio.data.local.PortfolioDatabase
 import com.personal.portfolio.data.local.entity.AppSettingEntity
 import com.personal.portfolio.data.local.entity.QuoteCacheEntity
 import com.personal.portfolio.data.local.toEntity
+import com.personal.portfolio.data.remote.fund.EastMoneyFundClient
+import com.personal.portfolio.data.remote.quote.EastMoneySectorClient
 import com.personal.portfolio.data.remote.quote.TencentSymbolSearch
+import com.personal.portfolio.domain.model.AssetType
 import com.personal.portfolio.domain.model.Holding
 import com.personal.portfolio.domain.model.HoldingLookupResult
 import com.personal.portfolio.domain.model.HoldingSource
@@ -26,6 +29,8 @@ class QuoteRepositoryImpl(
     private val primary: QuoteProvider,
     private val fallback: QuoteProvider,
     private val symbolSearch: TencentSymbolSearch = TencentSymbolSearch(),
+    private val fundClient: EastMoneyFundClient = EastMoneyFundClient(),
+    private val sectorClient: EastMoneySectorClient = EastMoneySectorClient(),
     private val anomalyThreshold: BigDecimal = BigDecimal("0.03") // 3%
 ) : QuoteRepository {
 
@@ -52,15 +57,70 @@ class QuoteRepositoryImpl(
             return HoldingLookupResult.Failed("请填写代码或名称之一")
         }
 
+        if (market == Market.OTC_FUND) {
+            val key = symbolTrim.ifBlank { nameTrim }
+            return fillFromFund(key)
+        }
+
         return if (looksLikeCode(symbolTrim)) {
-            fillFromCode(symbolTrim, market)
+            val stock = fillFromCode(symbolTrim, market)
+            if (stock is HoldingLookupResult.Failed) {
+                val fund = fillFromFund(symbolTrim.filter { it.isDigit() }.ifEmpty { symbolTrim })
+                if (fund !is HoldingLookupResult.Failed) fund else stock
+            } else {
+                stock
+            }
         } else if (nameTrim.isNotEmpty()) {
             fillFromName(nameTrim)
         } else {
-            // 代码栏填了非数字内容，按名称搜
             fillFromName(symbolTrim)
         }
     }
+
+    private suspend fun fillFromFund(query: String): HoldingLookupResult {
+        val q = query.trim()
+        if (q.isEmpty()) return HoldingLookupResult.Failed("请填写基金代码或名称")
+        val list = try {
+            if (q.all { it.isDigit() } && q.length in 5..6) {
+                listOfNotNull(fundClient.getNav(q))
+            } else {
+                fundClient.search(q)
+            }
+        } catch (_: Exception) {
+            return HoldingLookupResult.Failed("基金查询失败，请检查网络后重试")
+        }
+        if (list.isEmpty()) {
+            return HoldingLookupResult.Failed("未找到基金「$q」")
+        }
+        if (list.size > 1) {
+            val exact = list.filter { it.name.equals(q, ignoreCase = true) || it.code == q }
+            if (exact.size != 1) {
+                return HoldingLookupResult.Candidates(
+                    list.map {
+                        SymbolCandidate(
+                            symbol = it.code,
+                            name = it.name,
+                            marketCode = "jj",
+                            typeHint = it.fundType
+                        )
+                    }
+                )
+            }
+            return fundToFilled(exact.first())
+        }
+        return fundToFilled(list.first())
+    }
+
+    private fun fundToFilled(f: com.personal.portfolio.data.remote.fund.FundQuote): HoldingLookupResult.Filled =
+        HoldingLookupResult.Filled(
+            symbol = f.code,
+            name = f.name,
+            marketCode = "jj",
+            price = f.nav,
+            sector = EastMoneyFundClient.sectorOf(f.theme, f.fundType),
+            assetTypeName = f.suggestedAssetType.name,
+            navAsOfDate = f.navDate
+        )
 
     private suspend fun fillFromCode(symbol: String, market: Market): HoldingLookupResult {
         val inferred = QuoteSymbolMapper.inferMarket(symbol) ?: market
@@ -69,30 +129,48 @@ class QuoteRepositoryImpl(
         val quote = fetchQuote(code)
             ?: return HoldingLookupResult.Failed("未查到行情：$code")
         val price = quote.price.takeIf { it > BigDecimal.ZERO }
+        val marketCode = when {
+            code.startsWith("sh") -> "sh"
+            code.startsWith("sz") -> "sz"
+            code.startsWith("bj") -> "bj"
+            else -> "sh"
+        }
+        val sector = runCatching {
+            sectorClient.industry(marketCode, QuoteSymbolMapper.stripPrefix(code))
+        }.getOrNull()
         return HoldingLookupResult.Filled(
             symbol = QuoteSymbolMapper.stripPrefix(code),
             name = quote.name?.takeIf { it.isNotBlank() } ?: symbol,
-            marketCode = when {
-                code.startsWith("sh") -> "sh"
-                code.startsWith("sz") -> "sz"
-                code.startsWith("bj") -> "bj"
-                else -> "sh"
-            },
-            price = price
+            marketCode = marketCode,
+            price = price,
+            sector = sector,
+            assetTypeName = AssetType.CHINA_EQUITY.name
         )
     }
 
     private suspend fun fillFromName(query: String): HoldingLookupResult {
-        val candidates = try {
+        val stockCandidates = try {
             symbolSearch.search(query)
         } catch (_: Exception) {
-            return HoldingLookupResult.Failed("名称搜索失败，请检查网络后重试")
+            emptyList()
         }
+        val fundCandidates = try {
+            fundClient.search(query).map {
+                SymbolCandidate(
+                    symbol = it.code,
+                    name = it.name,
+                    marketCode = "jj",
+                    typeHint = it.fundType
+                )
+            }
+        } catch (_: Exception) {
+            emptyList()
+        }
+        val candidates = (stockCandidates + fundCandidates).distinctBy { "${it.marketCode}:${it.symbol}" }
         if (candidates.isEmpty()) {
             return HoldingLookupResult.Failed("未找到匹配「$query」的标的")
         }
         if (candidates.size > 1) {
-            // 完全同名优先；否则交给用户选
             val exact = candidates.filter { it.name.equals(query, ignoreCase = true) }
             if (exact.size != 1) {
                 return HoldingLookupResult.Candidates(candidates)
@@ -103,13 +181,21 @@ class QuoteRepositoryImpl(
     }
 
     private suspend fun fillCandidate(c: SymbolCandidate): HoldingLookupResult {
+        if (c.marketCode.equals("jj", ignoreCase = true)) {
+            return fillFromFund(c.symbol)
+        }
         val code = c.marketCode + c.symbol.filter { it.isDigit() }
         val quote = fetchQuote(code)
+        val sector = runCatching {
+            sectorClient.industry(c.marketCode, c.symbol)
+        }.getOrNull()
         return HoldingLookupResult.Filled(
             symbol = c.symbol.filter { it.isDigit() }.ifEmpty { c.symbol },
             name = c.name,
             marketCode = c.marketCode,
-            price = quote?.price?.takeIf { it > BigDecimal.ZERO }
+            price = quote?.price?.takeIf { it > BigDecimal.ZERO },
+            sector = sector,
+            assetTypeName = AssetType.CHINA_EQUITY.name
         )
     }
 
@@ -138,13 +224,14 @@ class QuoteRepositoryImpl(
         val quoteable = holdings.mapNotNull { h ->
             QuoteSymbolMapper.toQuoteCode(h)?.let { code -> h to code }
         }
-        val skipped = holdings.size - quoteable.size
-        if (quoteable.isEmpty()) {
-            // 无可刷新代码时不刷长提示（场外净值本就手填，首页占地方且易截断）
+        val funds = holdings.filter { it.market == Market.OTC_FUND }
+        val skipped = holdings.size - quoteable.size - funds.size
+
+        if (quoteable.isEmpty() && funds.isEmpty()) {
             persistMeta(null, "")
             return QuoteRefreshResult(
                 updatedHoldings = 0,
-                skippedHoldings = skipped,
+                skippedHoldings = skipped.coerceAtLeast(0),
                 failedSymbols = emptyList(),
                 lastUpdatedEpochMs = null,
                 todayProfit = null,
@@ -154,120 +241,156 @@ class QuoteRepositoryImpl(
             )
         }
 
-        val codes = quoteable.map { it.second }.distinct()
-        var warning = QuoteWarning.NONE
-        var usedProvider = primary.id
-        var quotes: List<Quote> = emptyList()
-        var primaryFailed = false
-
-        try {
-            quotes = primary.getQuotes(codes)
-            if (quotes.isEmpty()) {
-                primaryFailed = true
-                throw IllegalStateException("主行情源返回空")
-            }
-        } catch (_: Exception) {
-            primaryFailed = true
-            try {
-                quotes = fallback.getQuotes(codes)
-                usedProvider = fallback.id
-                warning = QuoteWarning.PROVIDER_FALLBACK
-            } catch (_: Exception) {
-                // use cache entirely
-                val cached = cacheDao.getAll(codes).map { it.toQuote() }
-                if (cached.isEmpty()) {
-                    val msg = "行情获取失败，且没有可用缓存。"
-                    persistMeta(null, msg)
-                    return QuoteRefreshResult(
-                        updatedHoldings = 0,
-                        skippedHoldings = skipped,
-                        failedSymbols = codes,
-                        lastUpdatedEpochMs = null,
-                        todayProfit = null,
-                        warning = QuoteWarning.USED_CACHE,
-                        message = msg,
-                        usedProviderId = null
-                    )
-                }
-                quotes = cached
-                usedProvider = cached.firstOrNull()?.providerId ?: "cache"
-                warning = QuoteWarning.USED_CACHE
-            }
-        }
-
-        // Optional dual-source anomaly check when primary succeeded
-        if (!primaryFailed && quotes.isNotEmpty()) {
-            try {
-                val alt = fallback.getQuotes(codes).associateBy { it.symbol }
-                var anomaly = false
-                for (q in quotes) {
-                    val other = alt[q.symbol] ?: continue
-                    val mid = q.price.add(other.price).divide(BigDecimal(2), 6, RoundingMode.HALF_UP)
-                    if (mid.compareTo(BigDecimal.ZERO) == 0) continue
-                    val diff = q.price.subtract(other.price).abs()
-                        .divide(mid, 6, RoundingMode.HALF_UP)
-                    if (diff > anomalyThreshold) {
-                        anomaly = true
-                        break
-                    }
-                }
-                if (anomaly) {
-                    warning = QuoteWarning.PRICE_ANOMALY
-                    // Do not apply anomalous live prices; keep cache / existing holdings.
-                    val msg = "行情数据异常（主备源价差过大），请人工确认。未自动改写持仓价格。"
-                    persistMeta(System.currentTimeMillis(), msg)
-                    return QuoteRefreshResult(
-                        updatedHoldings = 0,
-                        skippedHoldings = skipped,
-                        failedSymbols = emptyList(),
-                        lastUpdatedEpochMs = System.currentTimeMillis(),
-                        todayProfit = null,
-                        warning = warning,
-                        message = msg,
-                        usedProviderId = usedProvider
-                    )
-                }
-            } catch (_: Exception) {
-                // ignore fallback probe failures
-            }
-        }
-
-        val byCode = quotes.associateBy { it.symbol }
-        cacheDao.upsertAll(quotes.map { it.toEntity() })
-
         var updated = 0
         val failed = mutableListOf<String>()
         var todayProfit = BigDecimal.ZERO
         var hasToday = false
         val now = System.currentTimeMillis()
+        var warning = QuoteWarning.NONE
+        var usedProvider = primary.id
 
-        for ((holding, code) in quoteable) {
-            val quote = byCode[code]
-            if (quote == null) {
-                failed += code
+        if (quoteable.isNotEmpty()) {
+            val codes = quoteable.map { it.second }.distinct()
+            var quotes: List<Quote> = emptyList()
+            var primaryFailed = false
+
+            try {
+                quotes = primary.getQuotes(codes)
+                if (quotes.isEmpty()) {
+                    primaryFailed = true
+                    throw IllegalStateException("主行情源返回空")
+                }
+            } catch (_: Exception) {
+                primaryFailed = true
+                try {
+                    quotes = fallback.getQuotes(codes)
+                    usedProvider = fallback.id
+                    warning = QuoteWarning.PROVIDER_FALLBACK
+                } catch (_: Exception) {
+                    val cached = cacheDao.getAll(codes).map { it.toQuote() }
+                    if (cached.isEmpty() && funds.isEmpty()) {
+                        val msg = "行情获取失败，且没有可用缓存。"
+                        persistMeta(null, msg)
+                        return QuoteRefreshResult(
+                            updatedHoldings = 0,
+                            skippedHoldings = skipped.coerceAtLeast(0),
+                            failedSymbols = codes,
+                            lastUpdatedEpochMs = null,
+                            todayProfit = null,
+                            warning = QuoteWarning.USED_CACHE,
+                            message = msg,
+                            usedProviderId = null
+                        )
+                    }
+                    quotes = cached
+                    usedProvider = cached.firstOrNull()?.providerId ?: "cache"
+                    warning = QuoteWarning.USED_CACHE
+                }
+            }
+
+            if (!primaryFailed && quotes.isNotEmpty()) {
+                try {
+                    val alt = fallback.getQuotes(codes).associateBy { it.symbol }
+                    var anomaly = false
+                    for (q in quotes) {
+                        val other = alt[q.symbol] ?: continue
+                        val mid = q.price.add(other.price).divide(BigDecimal(2), 6, RoundingMode.HALF_UP)
+                        if (mid.compareTo(BigDecimal.ZERO) == 0) continue
+                        val diff = q.price.subtract(other.price).abs()
+                            .divide(mid, 6, RoundingMode.HALF_UP)
+                        if (diff > anomalyThreshold) {
+                            anomaly = true
+                            break
+                        }
+                    }
+                    if (anomaly) {
+                        warning = QuoteWarning.PRICE_ANOMALY
+                        val msg = "行情数据异常（主备源价差过大），请人工确认。未自动改写持仓价格。"
+                        persistMeta(System.currentTimeMillis(), msg)
+                        return QuoteRefreshResult(
+                            updatedHoldings = 0,
+                            skippedHoldings = skipped.coerceAtLeast(0),
+                            failedSymbols = emptyList(),
+                            lastUpdatedEpochMs = System.currentTimeMillis(),
+                            todayProfit = null,
+                            warning = warning,
+                            message = msg,
+                            usedProviderId = usedProvider
+                        )
+                    }
+                } catch (_: Exception) {
+                }
+            }
+
+            val byCode = quotes.associateBy { it.symbol }
+            if (quotes.isNotEmpty()) {
+                cacheDao.upsertAll(quotes.map { it.toEntity() })
+            }
+
+            for ((holding, code) in quoteable) {
+                val quote = byCode[code]
+                if (quote == null) {
+                    failed += code
+                    continue
+                }
+                var sector = holding.sector
+                if (sector.isNullOrBlank()) {
+                    val mkt = when {
+                        code.startsWith("sh") -> "sh"
+                        code.startsWith("sz") -> "sz"
+                        code.startsWith("bj") -> "bj"
+                        else -> "sh"
+                    }
+                    sector = runCatching {
+                        sectorClient.industry(mkt, QuoteSymbolMapper.stripPrefix(code))
+                    }.getOrNull() ?: sector
+                }
+                val next = holding.copy(
+                    currentPrice = quote.price,
+                    name = quote.name?.takeIf { it.isNotBlank() } ?: holding.name,
+                    sector = sector,
+                    source = HoldingSource.QUOTE_SYNC,
+                    updatedAtEpochMs = now
+                )
+                holdingDao.upsert(next.toEntity())
+                updated++
+                val prev = quote.prevClose
+                if (prev != null) {
+                    val day = quote.price.subtract(prev).multiply(holding.quantity)
+                    todayProfit = todayProfit.add(day)
+                    hasToday = true
+                }
+            }
+        }
+
+        for (holding in funds) {
+            val fund = try {
+                fundClient.getNav(holding.symbol)
+            } catch (_: Exception) {
+                null
+            }
+            if (fund == null) {
+                failed += holding.symbol
                 continue
             }
-            val next = holding.copy(
-                currentPrice = quote.price,
-                name = quote.name?.takeIf { it.isNotBlank() } ?: holding.name,
-                source = HoldingSource.QUOTE_SYNC,
-                updatedAtEpochMs = now
+            val sector = holding.sector?.takeIf { it.isNotBlank() }
+                ?: EastMoneyFundClient.sectorOf(fund.theme, fund.fundType)
+            holdingDao.upsert(
+                holding.copy(
+                    currentPrice = fund.nav,
+                    name = fund.name.takeIf { it.isNotBlank() && it != fund.code } ?: holding.name,
+                    sector = sector,
+                    navAsOfDate = fund.navDate ?: holding.navAsOfDate,
+                    source = HoldingSource.QUOTE_SYNC,
+                    updatedAtEpochMs = now
+                ).toEntity()
             )
-            holdingDao.upsert(next.toEntity())
             updated++
-            val prev = quote.prevClose
-            if (prev != null) {
-                val day = quote.price.subtract(prev).multiply(holding.quantity)
-                todayProfit = todayProfit.add(day)
-                hasToday = true
-            }
+            if (quoteable.isEmpty()) usedProvider = "eastmoney-fund"
         }
 
         if (failed.isNotEmpty() && warning == QuoteWarning.NONE) {
             warning = QuoteWarning.PARTIAL_FAILURE
-        }
-        if (warning == QuoteWarning.USED_CACHE && updated > 0) {
-            // already set
         }
 
         val message = when (warning) {
@@ -280,13 +403,13 @@ class QuoteRepositoryImpl(
             QuoteWarning.PARTIAL_FAILURE ->
                 "部分代码刷新失败：${failed.joinToString()}。行情可能存在延迟。"
             QuoteWarning.NONE ->
-                "行情已更新（来源：$usedProvider）。行情可能存在延迟。"
+                "行情/净值已更新（来源：$usedProvider）。可能存在延迟。"
         }
 
         persistMeta(now, message)
         return QuoteRefreshResult(
             updatedHoldings = updated,
-            skippedHoldings = skipped,
+            skippedHoldings = skipped.coerceAtLeast(0),
             failedSymbols = failed,
             lastUpdatedEpochMs = now,
             todayProfit = if (hasToday) todayProfit.setScale(2, RoundingMode.HALF_UP) else null,

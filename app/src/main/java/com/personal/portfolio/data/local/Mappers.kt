@@ -24,6 +24,7 @@ fun HoldingEntity.toDomain(): Holding = Holding(
     currentPrice = BigDecimal(currentPrice),
     currency = currency,
     source = runCatching { HoldingSource.valueOf(source) }.getOrDefault(HoldingSource.MANUAL),
+    navAsOfDate = navAsOfDate,
     updatedAtEpochMs = updatedAtEpochMs
 )
 
@@ -39,6 +40,7 @@ fun Holding.toEntity(): HoldingEntity = HoldingEntity(
     currentPrice = currentPrice.toPlainString(),
     currency = currency,
     source = source.name,
+    navAsOfDate = navAsOfDate,
     updatedAtEpochMs = updatedAtEpochMs
 )
 

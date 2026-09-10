@@ -107,6 +107,9 @@ interface AiAnalysisHistoryDao {
 
     @Query("UPDATE ai_analysis_history SET accepted = :accepted WHERE id = :id")
     suspend fun updateAccepted(id: Long, accepted: Boolean)
+
+    @Query("DELETE FROM ai_analysis_history WHERE id = :id")
+    suspend fun deleteById(id: Long)
 }
 
 @Dao

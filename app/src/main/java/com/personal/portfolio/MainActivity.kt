@@ -124,7 +124,9 @@ private fun PortfolioRoot(viewModel: PortfolioViewModel) {
                     onBack = { navController.popBackStack() },
                     onOpenSettings = { navController.navigate(Route.Settings.path) },
                     onRun = { viewModel.runAiAnalysis() },
-                    onMarkAccepted = { id, accepted -> viewModel.markAiAccepted(id, accepted) }
+                    onMarkAccepted = { id, accepted -> viewModel.markAiAccepted(id, accepted) },
+                    onDeleteHistory = { viewModel.deleteAiHistory(it) },
+                    onOpenHistory = { viewModel.openAiHistoryResult(it) }
                 )
             }
             composable(Route.NewMoney.path) {

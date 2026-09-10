@@ -37,6 +37,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.personal.portfolio.domain.model.AllocationRow
 import com.personal.portfolio.domain.model.AllocationSnapshot
+import com.personal.portfolio.domain.model.AssetType
 import com.personal.portfolio.domain.model.WeightStatus
 import com.personal.portfolio.domain.quote.QuoteSymbolMapper
 import com.personal.portfolio.domain.risk.RiskLevel
@@ -48,14 +49,14 @@ import com.personal.portfolio.ui.formatPctCompact
 import com.personal.portfolio.ui.formatSignedPpCompact
 import java.math.BigDecimal
 
-private val ChartColors = listOf(
-    Color(0xFF1F6F6A),
-    Color(0xFF3D6B99),
-    Color(0xFFB86B2A),
-    Color(0xFF8B5A7C),
-    Color(0xFF5C6B7A),
-    Color(0xFF6A8F4E)
-)
+private fun colorForAsset(type: AssetType): Color = when (type) {
+    AssetType.CHINA_EQUITY -> Color(0xFF00897B)      // 青绿
+    AssetType.OVERSEAS_EQUITY, AssetType.US_EQUITY -> Color(0xFF1565C0) // 亮蓝
+    AssetType.BOND -> Color(0xFFF9A825)              // 明黄
+    AssetType.COMMODITY -> Color(0xFFE53935)         // 朱红
+    AssetType.CASH -> Color(0xFF43A047)              // 草绿
+    AssetType.OTHER -> Color(0xFF6D4C41)             // 棕灰
+}
 
 private val OverColor = Color(0xFFB54708)
 private val UnderColor = Color(0xFF175CD3)
@@ -109,6 +110,7 @@ fun DashboardScreen(
         if (snapshot != null && snapshot.rows.isNotEmpty()) {
             AllocationRing(snapshot.rows)
             MaxDeviationSection(snapshot.rows)
+            SectorExposureSection(state.sectorExposure)
             RiskSection(state)
             AiSummarySection(state, onOpenAi)
         } else {
@@ -275,6 +277,48 @@ private fun AiSummarySection(state: PortfolioUiState, onOpenAi: () -> Unit) {
             Text(latest.summary)
         }
         OutlinedButton(onClick = onOpenAi) { Text("打开 AI") }
+    }
+}
+
+@Composable
+private fun SectorExposureSection(rows: List<com.personal.portfolio.domain.allocation.SectorExposureRow>) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(16.dp))
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Text("行业占比", style = MaterialTheme.typography.titleLarge)
+        Text(
+            "大类可偏科，行业宜分散；未填行业计入「未分类」",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        if (rows.isEmpty()) {
+            Text("没数据", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        } else {
+            SimpleTable(
+                headers = listOf(
+                    TableHeader("行业", 0.40f, TextAlign.Start),
+                    TableHeader("市值", 0.30f, TextAlign.End),
+                    TableHeader("占比", 0.30f, TextAlign.End)
+                )
+            ) {
+                rows.take(12).forEach { row ->
+                    TableRow {
+                        TableCell(row.sector, weight = 0.40f, bold = true, maxLines = 1)
+                        TableCell(formatMoney(row.marketValue), weight = 0.30f, align = TextAlign.End)
+                        TableCell(
+                            formatPctCompact(row.ratio),
+                            weight = 0.30f,
+                            align = TextAlign.End,
+                            color = if (row.ratio > BigDecimal("0.25")) OverColor else NearColor
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -447,7 +491,7 @@ private fun AllocationRing(rows: List<AllocationRow>) {
                         (row.currentRatio.toFloat() / total.toFloat()) * 360f
                     }
                     drawArc(
-                        color = ChartColors[index % ChartColors.size],
+                        color = colorForAsset(row.assetType),
                         startAngle = start,
                         sweepAngle = sweep,
                         useCenter = false,
@@ -470,7 +514,7 @@ private fun AllocationRing(rows: List<AllocationRow>) {
                     Box(
                         Modifier
                             .size(10.dp)
-                            .background(ChartColors[index % ChartColors.size], RoundedCornerShape(2.dp))
+                            .background(colorForAsset(row.assetType), RoundedCornerShape(2.dp))
                     )
                     Spacer(Modifier.size(8.dp))
                     Text(row.assetType.displayNameZh)

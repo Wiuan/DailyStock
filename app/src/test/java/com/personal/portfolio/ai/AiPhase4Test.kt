@@ -72,5 +72,48 @@ class AiPhase4Test {
     fun systemPrompt_forbidsTradingAndRuleEdits() {
         assertTrue(AiSnapshotBuilder.SYSTEM_PROMPT.contains("不能下单"))
         assertTrue(AiSnapshotBuilder.SYSTEM_PROMPT.contains("不能修改周30"))
+        assertTrue(AiSnapshotBuilder.SYSTEM_PROMPT.contains("\"summary\""))
+    }
+
+    @Test
+    fun parser_handlesSparseAndChineseKeys() {
+        val sparse = AiResultParser.parse("""{"riskLevel":"MEDIUM"}""")
+        assertEquals("MEDIUM", sparse.riskLevel)
+        assertTrue(AiResultParser.isSparse(sparse) || sparse.summary.isNotBlank())
+
+        val zh = AiResultParser.parse(
+            """{"摘要":"组合偏股","风险等级":"HIGH","推理":["低配债"],"超配":["CHINA_EQUITY"]}"""
+        )
+        assertEquals("组合偏股", zh.summary)
+        assertEquals("HIGH", zh.riskLevel)
+        assertEquals(listOf("低配债"), zh.reasoning)
+        assertEquals(listOf("CHINA_EQUITY"), zh.overweightAssets)
+    }
+
+    @Test
+    fun parser_mapsAlternatePortfolioAdviceSchema() {
+        val raw = """
+            {
+              "marketRegime":"NEUTRAL",
+              "portfolioSummary":{
+                "totalAssets":"579441.68",
+                "overallAssessment":"A股超配约15.75%，现金超配约18%，海外与债券低配。"
+              },
+              "allocationAdvice":[
+                {"assetType":"CHINA_EQUITY","action":"REDUCE_CONSIDER","status":"OVERWEIGHT","message":"A股超配，可考虑减仓"},
+                {"assetType":"BOND","action":"CAN_ADD_GRADUALLY","status":"UNDERWEIGHT","message":"债券低配约20个百分点"}
+              ],
+              "holdingAdvice":[
+                {"symbol":"000651","assetType":"CHINA_EQUITY","ma30wStatus":"ABOVE_MA30W","action":"HOLD","reason":"站上周30，持有等待回调"}
+              ]
+            }
+        """.trimIndent()
+        val result = AiResultParser.parse(raw)
+        assertFalse(AiResultParser.isSparse(result))
+        assertTrue(result.summary.contains("A股超配"))
+        assertTrue(result.overweightAssets.contains("CHINA_EQUITY"))
+        assertTrue(result.underweightAssets.contains("BOND"))
+        assertTrue(result.holdSuggestions.any { it.symbol == "000651" && it.action == "HOLD" })
+        assertTrue(result.holdSuggestions.any { it.symbol == "CHINA_EQUITY" })
     }
 }

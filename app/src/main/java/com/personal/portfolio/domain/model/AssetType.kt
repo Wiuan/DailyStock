@@ -32,7 +32,18 @@ enum class Market {
     HK,
     US,
     OTC_FUND,
-    OTHER
+    OTHER;
+
+    val labelZh: String
+        get() = when (this) {
+            SH -> "沪市"
+            SZ -> "深市"
+            BJ -> "北交所"
+            HK -> "港股"
+            US -> "美股"
+            OTC_FUND -> "场外基金"
+            OTHER -> "其他"
+        }
 }
 
 enum class HoldingSource {

@@ -15,6 +15,8 @@ data class Holding(
     val currentPrice: BigDecimal,
     val currency: String = "CNY",
     val source: HoldingSource = HoldingSource.MANUAL,
+    /** 场外基金净值日期 yyyy-MM-dd；股票可空 */
+    val navAsOfDate: String? = null,
     val updatedAtEpochMs: Long = System.currentTimeMillis()
 ) {
     val marketValue: BigDecimal

@@ -148,4 +148,8 @@ class AiAnalysisRepositoryImpl(
     override suspend fun markAccepted(id: Long, accepted: Boolean) {
         historyDao.updateAccepted(id, accepted)
     }
+
+    override suspend fun deleteHistory(id: Long) {
+        historyDao.deleteById(id)
+    }
 }

@@ -16,6 +16,7 @@ data class HoldingEntity(
     val currentPrice: String,
     val currency: String,
     val source: String,
+    val navAsOfDate: String? = null,
     val updatedAtEpochMs: Long
 )
 
