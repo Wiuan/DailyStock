@@ -37,12 +37,13 @@ import com.personal.portfolio.domain.model.Holding
 import com.personal.portfolio.ui.formatMoney
 import com.personal.portfolio.ui.formatPct
 
-private val ColName = 108.dp
-private val ColCode = 80.dp
-private val ColType = 56.dp
-private val ColMv = 104.dp
-private val ColPnl = 104.dp
-private val TableWidth = ColName + ColCode + ColType + ColMv + ColPnl
+private val ColName = 100.dp
+private val ColCode = 72.dp
+private val ColType = 48.dp
+private val ColSector = 80.dp
+private val ColMv = 100.dp
+private val ColPnl = 100.dp
+private val TableWidth = ColName + ColCode + ColType + ColSector + ColMv + ColPnl
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -128,6 +129,7 @@ private fun HoldingsHeaderRow() {
         HeaderCell("名称", ColName, TextAlign.Start)
         HeaderCell("代码", ColCode, TextAlign.Start)
         HeaderCell("类别", ColType, TextAlign.Start)
+        HeaderCell("行业", ColSector, TextAlign.Start)
         HeaderCell("市值", ColMv, TextAlign.End)
         HeaderCell("盈亏", ColPnl, TextAlign.End)
     }
@@ -165,6 +167,14 @@ private fun HoldingTableRow(holding: Holding, onClick: () -> Unit) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,
             overflow = TextOverflow.Clip
+        )
+        Text(
+            holding.sector?.trim()?.takeIf { it.isNotEmpty() } ?: "—",
+            modifier = Modifier.width(ColSector),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
         )
         Text(
             formatMoney(holding.marketValue),

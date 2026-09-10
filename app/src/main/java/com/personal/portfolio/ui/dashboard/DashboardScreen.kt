@@ -205,7 +205,12 @@ private fun Ma30wRiskSnippet(state: PortfolioUiState) {
                 s.status == com.personal.portfolio.domain.strategy.Ma30wTrendStatus.BELOW_MA30W_WATCH ||
                 s.status == com.personal.portfolio.domain.strategy.Ma30wTrendStatus.BUY_CANDIDATE
             )
-    }
+    }.sortedWith(
+        // 偏离从小到大：跌破最深的在前，站上最多的在后
+        compareBy<com.personal.portfolio.domain.strategy.Ma30wState> {
+            it.distancePct ?: BigDecimal.valueOf(Double.MAX_VALUE)
+        }
+    )
     Column(
         modifier = Modifier
             .fillMaxWidth()
